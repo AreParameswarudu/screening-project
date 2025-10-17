@@ -1,0 +1,387 @@
+1. Project-1
+-----------------
+
+	3- tier architecture.
+	------------------------------
+
+	Major features:
+	-----------------------	
+		1. Logs on Backend application level, ( cloud watch agents ---> cloud watch --> metrics monitoring, --> alarms, --> sns ---> lambda ---> slack ( notification ) )
+		2. Security --> DNS, R53, WAF, 
+		3. Life cycle hooks, Auto scaling.
+
+
+	Architecture:
+	-------------------
+		1. Creating VPC
+		
+			Create own VPC with /16 as mask.
+			Create 5 subnets
+				1. dev-pub-1a		10.0.0.0/24
+				2. dev-pub-1b		10.0.1.0/24
+				3. dev-pub-1c		10.0.2.0/24
+				4. dev-priv-1a	10.0.3.0/24
+				5. dev-priv-1b	10.0.4.0/24
+				6. dev-priv-1c		10.0.5.0/24
+
+			Internet gateway = Cheeta-igw
+			Attach it  to the VPC created earlier
+			
+			Route tables
+			------------------
+				1. Public route table ( cheeta-dev-pub-rt)
+					Subnet association
+						dev-pub-1a/1b/1c
+					Edit the route, add the internet gateway
+
+				2. Private route table ( cheeta-dev-priv-rt)
+					subnet association
+						dev-priv-1a/1b/1c
+					
+
+				
+			Nate gateway (cheeta-nat-igw)
+				select the public subnet to reside ( dev-pub-1a )
+				Allocate EIP
+				Create the NAT
+			
+			Edit the private route to associate NAT gateway
+
+			
+
+
+	2. Security Group 
+		
+		1. RDS sg --> 3306   ( from BE SG )
+		2. SG -BE  --> 8084	( from NLB) 
+		3. SG NLB --> tcp/nlp   - 80  ( form FE SG )
+		4. SG FE 	--> 8501 	 --> ( from ALB )
+		5. SG ALB ---> HTTP/HTTPS - 80/443  ( from internet - 0.0.0.0/16)
+
+		
+		 
+	
+	3. Creating RDS
+	
+		1. Create a subnet group
+			choose subnets ( 1a, 1b, 1c ) and choose the privates
+
+		2. Create a db
+			MySQL
+			Sandbox or dev.test
+			admin  - rudhra123456789
+			choose the firewall (sg) 
+
+			
+			Logs, --> Audit and error logs
+	
+		
+		Q: Encrypting the already unencrypted database
+		A: Create a snapshot of the db --> restore the snap shot but while restoring, use/enable encryption.
+	
+	4. Launch templates
+		
+		cheeta-dev-be-lt
+		AL2023
+		t2.medium
+		choose key-pair
+		choose SG
+		
+
+		This ec2 need to connect to the s3 bucket as they contain the jar files, so In order for that we use IAM role
+		IAM role
+		------------
+			1. To connect to s3 and to download jar file
+				TE:  EC2	
+				Permission: 1. s3 ( full access )
+						   2. CloudWatch Agent policy ( Cloud agent policy to export the logs )
+
+			       			3. Another custom policy !!!!!  ( for lifecycle hooks )
+
+		Attach the role to the Ec2 in the Launch template
+	
+		Create a bucket and add jar file to the bucket.
+							
+			
+		Add user data:
+		---------------------
+			To install the cloudwatch agent to the ec2 so that 
+			Installing the jar file form the s3 bucket.
+			Collecting the logs and exporting the logs to the cloud watch log groups.
+
+		NOTE: It is not advised to use ROOT user to execute the application in any stage of the architecture.
+
+
+
+	5. Create a NLB and TG and ASG.
+
+		1. Create Target groups with no ec2 
+		    tcp --> 8084
+	       	    In the TG, --> Health checks, --> edit --> http ---> path  = /actuator  --> success code = 200.
+
+		2. Create a Network Load balancer
+			Internal facing
+			select the private subnets
+			and the SG
+			listener at port 80
+			
+
+		3. In the ASG, 
+			Give name
+			select the launch template
+			select the vpc
+			select the AZ ( priv -1a/1b/1c )
+			Availability zone distribution =  balanced
+		
+			Select the already created LB
+			Turn on the Elastic Load balancer health checks
+
+		Create Auto scaling group
+
+		
+		
+
+	6. CloudWatch logs and metrics
+     	    --------------------------------------------
+		Go to the cloud watch log groups --> select the log group --> actions --> create metrics filter 
+		
+		Filter pattern   = ERROR
+		Test the sample or actual logs for test.
+		Name space, Metric value = 1
+		create the metrics filter
+
+		
+
+		
+	7. SNS topic
+	
+		Standard type
+		cheetah-dev-notify-topic
+		create 
+	
+		Go back to CloudWatch logs, --> log group.
+		Select the metric --> create alarm --> 20 sec  ---> -ge  1 ( threshold value )
+		Notification -> In alarm --> SNS topic ( created earlier )
+		Alarm name --> create alarm.
+	
+
+	8. Creating SLACK for the Lambda functions.
+
+		api.slack.com/apps 	<--------------- go to link
+		
+		Create an new app
+		Select form scratch
+		App name = Data-store-dev-error-alert
+		Work spaces = select the default ( as account is new )
+	
+		Create  the app
+
+
+		Go inside the app
+		In coming Webhooks --> enable --> Add new webhook ( click )  --> Create new channel in the slack app  --> select the channel from the web based slack webhook creation.
+			get the webhook url ( copy ) --> save in some text file/helper file  to be used in the lambda function.
+			Slack-api-url
+		
+		
+	9. Lambda function
+		
+		Cheetah-dev-alert-function
+		python3.12
+		
+		Place the code
+		Also add the env and add the slack webhook.
+
+		Subscribe the SNS topic with the lambda function created.
+
+
+		Resource based policy 
+		--------------------------------
+			Policy or the permission for the resources to communicate with other services or resources.
+		
+	To get the alerts to the slack application
+	--------------------------------------------------------------
+		At the cloud watch logs, 
+			create a log and add ERROR statement 
+			This will be identified by the metrics filter and will notify the SNS topic and triggers the lambda function and the SLACK channel will be updated.
+
+	
+	
+
+
+Day -4
+________
+
+
+	1.Canary deployment 
+		and how it works with Lambda
+		and versioning and aliasing
+
+	CANARY DEPLOYMENT  :  Gradually redirecting the traffic to the new version once the new version is ok.
+							Testing of the application was done on directly on the end users. and that is why gradual redirecting the traffic.
+	How to perform the same in lambda!!!
+		by using versioning and aliasing 
+	
+		Firstly create the version and then create the alias for the respective versions.
+		We will edit the alias to route the 90 % of the traffic to one version and the 5% traffic to the other version, and gradually the % of the traffic routing changes based on the end users experience or 
+
+	Practical example:
+	--------------------------
+		Create a python based lambda function.
+		Create a sample code for the given template in lambda_function.py
+			```
+				print( "V1 Version" )
+
+			```
+		Deploy and test the function.
+	
+		Action --> publish new version --> publish as ( PROD )   ------------> this will become version.
+
+		Again go back and edit the code to DEPLOY version ---> deploy --> test --> and then again publish as STAGING (description ) 
+		
+
+		Re do the same with "Development version " --> deploy and test ( no need to create the version for this).
+
+		Create alias for the PROD version.
+		Create alias for the STAGING version
+		Create alias for the DEVELOPMENT ( latest function ).
+
+		
+		Select the PROD alias ---> edit ----> changes the weights.
+		We can test the function to see the results.
+
+
+
+	2. Clod start in lambda 
+
+		AWS will setup, 
+			1. Container
+			2. Run time env
+			3. Download the lambda code
+			4. Execute the code outside the lambda handler code.
+			5. Execute the code before the lambda handler.
+			6. Execute the lambda handler code.
+
+
+		
+		Going through every step above for every lambda function execution makes it latency for lambda to complete 
+		this is what called  COLD STARTS.
+
+		WARM STARTS  = it every lambda execution starts with 5 th step then there would be no latency fo resting up env for lambda which is termed as WARM START
+
+
+		Lambda concurrency
+		-------------------------------
+			To setup a set of containers to be setup so that the lambda functions will use them and not to wait for the lambda to set up overtime a 
+
+
+
+
+
+
+Day -6					17 Oct 2025
+----------
+		
+	Front end part
+	----------------------
+	
+		1. Create the security groups
+			1. for alb 		( http --> from anywhere )
+			2. for FE ASG	( tcp ( 8501 )  --> from ALB )
+
+		2. Taget group 
+			EC2 instances
+			target group http 8501
+			health check --> http --> / ---> 8501
+
+		
+		3. Launch template
+			t2. medium
+			key pair
+			security group
+			iam role  
+			user daa
+				edit/verify:  env name, s3 bucket name, nlb dns endpoint 
+			create launch template
+
+		4. ALB
+			internet facing
+			vpc
+			selet the public subnets
+			forward to 80
+			create load balancer
+
+		5. ASG
+			use the private subnets
+			choose the existing load balancer
+			Enale the health checks
+			desired cap - 1
+			
+		
+		Access the application.
+
+
+
+	6. Cloud front distribution
+		select the elb and create the CF
+		
+		Behaviours
+			edit, 
+				1. Viewer protocol policy
+					http and https
+				2. Chche key and origin request
+					enable Legacy cache setting
+						include headers
+							host, origin, 3 more custome headers
+				3. object caching
+					!!!!! use origin cache headers
+					enable custom and use the default mentioned
+				
+				save changes.
+		
+		
+		origins
+			edit
+			change it to http form https
+			
+		save the changes.
+
+		
+
+
+	Q: How to verify whether the application was served form the origin or form the cloud front edge location!
+	A: Inspect, --> network --> selesct the url of the clodfront, --> in the header --. check for the X-cache whether it is form cloud front or it missed the cloud front location.
+
+	7. Create Certificate in the ACM
+
+	
+	Making/ checking / Configuring for failover policy in cloud front
+	-------------------------------------------------------------------------------------------------
+		Firstly make the desired capacity form ASG to 0 ( to make the application unavailable for cloud front distro )
+			Access the application --> it should give 503 error in the browser
+
+		Now create a new origin for the distribution.
+		Create a origin group
+			select the fil over as 503 sevice unavailable 
+				
+		Behavior
+			select the origin as origin group.
+
+
+	8. Add the ACM certificate to the cloud front 
+	    Create a new record to the R53 as alias to the cloud front distro.
+
+
+	9. Create WAF 
+		create a web ACL or rule  to block requests from particular origin.
+		It will block the requests and display 40 3 error.
+
+		Rather than displaying the default template page for 403 error
+			we can add our custom page to be rendered
+			go to waf --> Custom response body --> add the html block.
+
+			Go to rule, 
+				edit the rule --> custom resonce page should be enabled
+					select the custom page that we have created. and save.
+
+		
+					
